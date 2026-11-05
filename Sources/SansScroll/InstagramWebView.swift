@@ -30,6 +30,10 @@ struct InstagramWebView: UIViewRepresentable {
             webView.isInspectable = true
         }
 
+        context.coordinator.titleObservation = webView.observe(\.title, options: [.new]) { wv, _ in
+            Task { @MainActor in Notifier.shared.titleChanged(wv.title) }
+        }
+
         model.attach(webView)
         webView.load(URLRequest(url: BrowserModel.home))
         return webView
@@ -52,6 +56,7 @@ struct InstagramWebView: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         let model: BrowserModel
+        var titleObservation: NSKeyValueObservation?
 
         init(model: BrowserModel) {
             self.model = model
