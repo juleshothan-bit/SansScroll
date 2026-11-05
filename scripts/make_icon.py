@@ -5,7 +5,17 @@ import zlib
 from pathlib import Path
 
 S = 1024
-TOP, BOT = (255, 122, 89), (124, 58, 237)
+# Dégradé façon Instagram : jaune → orange → rose → violet → bleu (bas-gauche → haut-droite)
+STOPS = [(0.0, (254, 218, 117)), (0.25, (250, 126, 30)), (0.5, (214, 41, 118)),
+         (0.75, (150, 47, 191)), (1.0, (79, 91, 213))]
+
+
+def grad(t):
+    for (t0, c0), (t1, c1) in zip(STOPS, STOPS[1:]):
+        if t <= t1:
+            k = (t - t0) / (t1 - t0)
+            return bytes(int(c0[i] + (c1[i] - c0[i]) * k) for i in range(3))
+    return bytes(STOPS[-1][1])
 
 
 def in_rrect(x, y, x0, y0, x1, y1, r):
@@ -20,7 +30,7 @@ rows = bytearray()
 for y in range(S):
     rows.append(0)
     for x in range(S):
-        t = (x * 0.35 + y * 0.65) / S
+        t = min(1.0, max(0.0, (x + (S - y)) / (2 * S)))
         white = (
             (in_rrect(x, y, 292, 212, 732, 812, 90)
              and not in_rrect(x, y, 336, 256, 688, 768, 46))
@@ -29,7 +39,7 @@ for y in range(S):
         if white:
             rows += b"\xff\xff\xff"
         else:
-            rows += bytes(int(TOP[i] + (BOT[i] - TOP[i]) * t) for i in range(3))
+            rows += grad(t)
 
 
 def chunk(kind, data):
