@@ -16,6 +16,10 @@
     <string>Pour choisir des photos à publier ou envoyer en message.</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>Pour enregistrer des photos dans ta galerie.</string>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+    </array>
     <key>UIStatusBarStyle</key>
     <string>UIStatusBarStyleDefault</string>
 </dict>
