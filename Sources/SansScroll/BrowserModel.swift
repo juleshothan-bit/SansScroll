@@ -40,6 +40,11 @@ final class BrowserModel: ObservableObject {
     func attach(_ webView: WKWebView) {
         self.webView = webView
         installScripts(on: webView.configuration.userContentController)
+
+        let notifier = Notifier.shared
+        notifier.currentPath = { [weak webView] in webView?.url?.path ?? "" }
+        notifier.openURL = { [weak webView] url in webView?.load(URLRequest(url: url)) }
+        notifier.start()
     }
 
     func installScripts(on controller: WKUserContentController) {
