@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var draft = FocusSettings.load()
     @State private var notifications = Notifier.shared.enabled
     @State private var confirmLogout = false
+    @State private var status = Notifier.shared.statusText
 
     var body: some View {
         NavigationStack {
@@ -48,6 +49,13 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Notifications", isOn: $notifications)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Dernière vérification").font(.caption).foregroundStyle(.secondary)
+                        Text(status).font(.footnote)
+                    }
+                    Button("Envoyer une notification test") {
+                        Notifier.shared.sendTest()
+                    }
                 } header: {
                     Text("Messages et activité")
                 } footer: {
@@ -105,6 +113,7 @@ struct SettingsView: View {
         .onAppear {
             draft = model.settings
             notifications = Notifier.shared.enabled
+            status = Notifier.shared.statusText
         }
     }
 }
