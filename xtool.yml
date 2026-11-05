@@ -1,0 +1,6 @@
+version: 1
+# Change "jules" si xtool/Sideloadly dit que l'identifiant est déjà pris.
+bundleID: fr.jules.sansscroll
+product: SansScroll
+infoPath: Info.plist
+iconPath: Resources/AppIcon.png
