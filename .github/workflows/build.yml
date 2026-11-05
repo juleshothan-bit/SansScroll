@@ -13,6 +13,11 @@ jobs:
       - name: Installer xtool
         run: brew install xtool-org/tap/xtool
 
+      - name: Préparer le script et l'icône
+        run: |
+          python3 scripts/embed.py
+          python3 scripts/make_icon.py
+
       - name: Compiler l'IPA
         run: |
           xtool dev build --ipa --configuration release
