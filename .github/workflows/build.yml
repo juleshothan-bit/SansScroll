@@ -1,0 +1,25 @@
+name: Build IPA
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer xtool
+        run: brew install xtool-org/tap/xtool
+
+      - name: Compiler l'IPA
+        run: |
+          xtool dev build --ipa --configuration release
+          find xtool -name "*.ipa" -exec cp {} SansScroll.ipa \;
+          ls -la SansScroll.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SansScroll-ipa
+          path: SansScroll.ipa
