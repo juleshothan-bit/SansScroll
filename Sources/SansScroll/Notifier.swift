@@ -6,8 +6,8 @@ import WebKit
 /// Notifications sans l'appli Instagram officielle :
 /// Sans Scroll reste éveillé en arrière-plan (piste audio silencieuse) et
 /// vérifie ton activité Instagram toutes les 30 secondes.
-/// Les messages privés sont signalés quand l'appli est ouverte (Instagram ne les
-/// rend pas lisibles en arrière-plan pour un navigateur).
+/// Les messages privés sont signalés quand l'appli est ouverte : le compteur de
+/// l'icône Messages d'Instagram est lu par le script injecté (inject.js).
 @MainActor
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     static let shared = Notifier()
@@ -116,19 +116,49 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - Vérification Instagram
 
     private var activityCount = 0
-    private var dmUnread = 0
+    private var dmUnread = -1   // -1 : pas encore connu (pas de notification au lancement)
+
+    /// Résultat de la dernière vérification, affiché dans les Réglages.
+    var statusText: String { defaults.string(forKey: "notifStatus") ?? "Pas encore de vérification." }
+
+    private func setStatus(_ text: String) {
+        let time = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)
+        defaults.set("\(time) : \(text)", forKey: "notifStatus")
+    }
 
     private func poll() async {
         let bg = UIApplication.shared.beginBackgroundTask(withName: "SansScrollPoll")
         defer { UIApplication.shared.endBackgroundTask(bg) }
 
-        guard let auth = await cookies() else { return }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        if settings.authorizationStatus == .denied {
+            setStatus("notifications refusées. Active-les dans Réglages iPhone › Notifications › Sans Scroll.")
+            return
+        }
+        guard let auth = await cookies() else {
+            setStatus("pas connecté à Instagram dans Sans Scroll.")
+            return
+        }
         activityCount = await checkActivity(auth) ?? activityCount
         updateBadge()
     }
 
     private func updateBadge() {
-        UNUserNotificationCenter.current().setBadgeCount(dmUnread + activityCount) { _ in }
+        UNUserNotificationCenter.current().setBadgeCount(max(0, dmUnread) + activityCount) { _ in }
+    }
+
+    /// Envoie une notification d'essai (bouton dans les Réglages).
+    func sendTest() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            Task { @MainActor in
+                guard granted else {
+                    self.setStatus("notifications refusées. Active-les dans Réglages iPhone › Notifications › Sans Scroll.")
+                    return
+                }
+                self.notify(id: "test-\(Date().timeIntervalSince1970)", title: "Sans Scroll",
+                            body: "Les notifications fonctionnent ✅", url: "https://www.instagram.com/", thread: "test")
+            }
+        }
     }
 
     private struct Auth {
@@ -146,8 +176,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         )
     }
 
-    private func get(_ path: String, _ auth: Auth) async -> [String: Any]? {
-        guard let url = URL(string: "https://www.instagram.com" + path) else { return nil }
+    private func get(_ path: String, _ auth: Auth) async -> (json: [String: Any]?, code: Int) {
+        guard let url = URL(string: "https://www.instagram.com" + path) else { return (nil, 0) }
         var req = URLRequest(url: url)
         req.httpShouldHandleCookies = false
         req.timeoutInterval = 20
@@ -157,16 +187,21 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         req.setValue(InstagramWebView.safariUserAgent, forHTTPHeaderField: "User-Agent")
         req.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
         req.setValue("*/*", forHTTPHeaderField: "Accept")
-        guard let result = try? await URLSession.shared.data(for: req),
-              (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return (try? JSONSerialization.jsonObject(with: result.0)) as? [String: Any]
+        guard let result = try? await URLSession.shared.data(for: req) else { return (nil, -1) }
+        let code = (result.1 as? HTTPURLResponse)?.statusCode ?? 0
+        guard code == 200 else { return (nil, code) }
+        return ((try? JSONSerialization.jsonObject(with: result.0)) as? [String: Any], code)
     }
 
     // MARK: Activité (likes, commentaires, abonnés, mentions…)
 
     /// Notifie chaque activité plus récente que la dernière vue. Renvoie le nombre de nouveautés.
     private func checkActivity(_ auth: Auth) async -> Int? {
-        guard let json = await get("/api/v1/news/inbox/", auth) else { return nil }
+        let (body, code) = await get("/api/v1/news/inbox/", auth)
+        guard let json = body else {
+            setStatus(code == -1 ? "pas de connexion internet." : "Instagram a refusé la vérification (code \(code)).")
+            return nil
+        }
         let lists = ["new_stories", "priority_stories", "old_stories"]
         let stories = lists.flatMap { json[$0] as? [[String: Any]] ?? [] }
 
@@ -189,6 +224,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
         defaults.set(maxTs, forKey: "lastActivityTs")
 
+        setStatus(firstRun ? "connecté, en attente de nouvelles activités."
+                           : "OK (\(fresh.count) nouvelle\(fresh.count > 1 ? "s" : "") activité\(fresh.count > 1 ? "s" : "")).")
         if !firstRun && !viewingActivity {
             for item in fresh.sorted(by: { $0.ts < $1.ts }).suffix(5) {
                 notify(id: "act-\(item.id)", title: "Instagram", body: item.text,
@@ -206,15 +243,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: Messages privés (quand l'appli est ouverte)
 
-    /// Instagram affiche "(3) Instagram" dans le titre de la page : 3 conversations non lues.
-    func titleChanged(_ title: String?) {
-        let n = title.flatMap { t -> Int? in
-            guard t.hasPrefix("("), let close = t.firstIndex(of: ")") else { return 0 }
-            return Int(t[t.index(after: t.startIndex)..<close])
-        } ?? 0
-        defer { dmUnread = n; updateBadge() }
-        guard enabled, n > dmUnread, !currentPath().hasPrefix("/direct") else { return }
-        let extra = n - dmUnread
+    /// Nombre de conversations non lues, lu sur l'icône Messages d'Instagram.
+    func dmCountChanged(_ n: Int) {
+        let previous = dmUnread
+        dmUnread = n
+        updateBadge()
+        guard enabled, previous >= 0, n > previous, !currentPath().hasPrefix("/direct") else { return }
+        let extra = n - previous
         notify(id: "dm-\(Date().timeIntervalSince1970)",
                title: "Nouveau message",
                body: extra == 1 ? "Tu as reçu un message privé." : "Tu as reçu \(extra) nouveaux messages privés.",
